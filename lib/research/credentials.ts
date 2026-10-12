@@ -2,7 +2,7 @@ import {createCipheriv,createDecipheriv,randomBytes,scryptSync} from 'node:crypt
 import type {DatabaseSync} from 'node:sqlite';
 
 export type Credentials={token?:string;access?:string;secret?:string;category?:string;license?:string};
-const services=['archive','osf','figshare','zenodo'];
+const services=['archive','osf','figshare','zenodo','gemini'];
 export class CredentialStore{
  private key:Buffer;
  constructor(private db:DatabaseSync,password:string){

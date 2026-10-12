@@ -4,3 +4,5 @@ export {makePdf} from '../lib/research/pdf';
 export {prepare,publish,reconcile,checkOsfToken,checkZenodoToken,checkConnection} from '../lib/research/publish';
 export {CredentialStore} from '../lib/research/credentials';
 export {generateReport} from '../lib/research/ai';
+
+export {generateGeminiReport,checkGeminiKey,GEMINI_MODEL} from '../lib/research/gemini';
