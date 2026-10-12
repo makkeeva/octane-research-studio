@@ -19,3 +19,9 @@ test('generation errors survive reload and interrupted jobs recover as failures 
   db.prepare('INSERT INTO generation_jobs(doc_id,status,stage,updated) VALUES(?,?,?,?)').run('interrupted','running','Research',new Date().toISOString());jobs=new GenerationJobs(db);assert.equal(jobs.get('error-doc').status,'failed');assert.equal(jobs.get('interrupted').status,'failed');assert.match(jobs.get('interrupted').error,/перезапущен/);
  }finally{db.close();}
 });
+
+test('structure errors identify fields and limits without echoing private model content',async()=>{
+ const db=new DatabaseSync(':memory:');try{const jobs=new GenerationJobs(db);
+ jobs.start('oversized',async()=>{throw Object.assign(new Error('private raw response'),{name:'ZodError',issues:[{code:'too_big',type:'string',maximum:350,path:['claims',2,'evidence'],message:'private model text'},{code:'invalid_type',path:['private invented field'],message:'private token'}]});},()=>{throw Error('Invalid report must not commit');});await setImmediate();const error=jobs.get('oversized').error;assert.match(error,/Факты.*№3.*Подтверждение факта.*350 символов/);assert.doesNotMatch(error,/private/);
+ }finally{db.close();}
+});

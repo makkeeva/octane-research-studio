@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {reportStructureError} from './validation';
 export class GenerationJobs{
  private running=new Set<string>();
  constructor(private db:DatabaseSync){
@@ -12,7 +13,7 @@ export class GenerationJobs{
   if(this.active(id))return this.get(id);
   this.running.add(id);this.mark(id,'running','Начинаем поиск источников…');
   void (async()=>{try{const value=await generate(stage=>this.mark(id,'running',stage));commit(value);this.mark(id,'done','Отчёт подготовлен. Проверьте факты и источники.');}
-   catch(e:any){const error=e.name==='ZodError'?'Модель вернула отчёт с неправильной структурой. Результат не сохранён.':e.name==='TimeoutError'||e.name==='AbortError'?'Модель не ответила вовремя. Отчёт не сохранён; попробуйте позже.':e.message||'Генерация не выполнена.';this.mark(id,'failed','Отчёт не создан',error);}
+   catch(e:any){const error=e.name==='ZodError'?reportStructureError(e):e.name==='TimeoutError'||e.name==='AbortError'?'Модель не ответила вовремя. Отчёт не сохранён; попробуйте позже.':e.message||'Генерация не выполнена.';this.mark(id,'failed','Отчёт не создан',error);}
    finally{this.running.delete(id);}})();
   return this.get(id);
  }
