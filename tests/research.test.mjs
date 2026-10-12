@@ -1,6 +1,12 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {PDFDocument} from 'pdf-lib';import {octaneUrl,importArticle,assertPublishable,makePdf,prepare,publish,generateReport,checkOsfToken} from '../dist/test-library.mjs';import {fixture} from './fixtures.mjs';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {PDFDocument} from 'pdf-lib';import {octaneUrl,importArticle,assertPublishable,makePdf,prepare,publish,generateReport,checkOsfToken,checkZenodoToken} from '../dist/test-library.mjs';import {fixture} from './fixtures.mjs';
 function response(data,status=200){return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});}
 async function mockFetch(fn,run){const original=globalThis.fetch;globalThis.fetch=fn;try{return await run();}finally{globalThis.fetch=original;}}
+test('Zenodo credential check only reads account depositions, accepts an empty account and returns no private metadata',async()=>{
+ await mockFetch(async(url,options)=>{assert.equal(url,'https://zenodo.org/api/deposit/depositions?size=1');assert.equal(options.method,'GET');assert.equal(options.headers.Authorization,'Bearer fake-zenodo-token');return response([{id:42,metadata:{title:'Private record'}}]);},async()=>{const result=await checkZenodoToken(' fake-zenodo-token ');assert.equal(result.ok,true);assert.doesNotMatch(JSON.stringify(result),/fake-zenodo-token|Private record|42/);});
+ await mockFetch(async()=>response([]),async()=>assert.equal((await checkZenodoToken('fake-zenodo-token')).ok,true));
+ for(const status of [401,403])await mockFetch(async()=>response({},status),async()=>assert.rejects(checkZenodoToken('invalid-test-token'),new RegExp('HTTP '+status)));
+ await mockFetch(async()=>response({message:'unexpected'}),async()=>assert.rejects(checkZenodoToken('fake-zenodo-token'),/не подтвердил/));
+});
 test('OSF credential check only reads the authenticated profile and never returns the token',async()=>{
  await mockFetch(async(url,options)=>{assert.equal(url,'https://api.osf.io/v2/users/me/');assert.equal(options.method,'GET');assert.equal(options.headers.Authorization,'Bearer fake-test-token');return response({data:{type:'users',id:'test-user'}});},async()=>{const result=await checkOsfToken(' fake-test-token ');assert.equal(result.ok,true);assert.doesNotMatch(JSON.stringify(result),/fake-test-token|test-user/);});
  await mockFetch(async()=>response({},401),async()=>assert.rejects(checkOsfToken('invalid-test-token'),/HTTP 401/));
