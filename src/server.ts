@@ -8,7 +8,7 @@ import {docSchema,assertPublishable} from '../lib/research/validation';
 import {importArticle,listArticles} from '../lib/research/source';
 import {generateReport} from '../lib/research/ai';
 import {makePdf} from '../lib/research/pdf';
-import {platforms,prepare,publish,reconcile,api} from '../lib/research/publish';
+import {platforms,prepare,publish,reconcile,api,checkOsfToken} from '../lib/research/publish';
 import type {Doc} from '../lib/research/types';
 import {requestPolicy} from '../lib/research/request-origin';
 const password=process.env.APP_PASSWORD||'';
@@ -55,6 +55,7 @@ createServer(async(req,res)=>{
  }
  if(method==='POST'){
  const b=await body(req);
+ if(action==='check-osf'){const token=creds('osf',b.credentials).token||'';return json(res,await checkOsfToken(String(token)));}
  if(action==='import'){const source=await importArticle(b.url);const d:Doc={...source,id:crypto.randomUUID(),created:new Date().toISOString(),language:b.language==='Русский'?'Русский':'English',author:'',license:'',report:null,reviewed:false,rights:false,researchContribution:''};saveDoc(d);return json(res,{doc:d});}
  if(action==='save'){const d=docSchema.parse(b.doc);editable(d.id);if(d.report){const ids=new Set(d.report.sources.map(s=>s.id));if(ids.size!==d.report.sources.length||d.report.claims.some(c=>c.sourceIds.some(id=>!ids.has(id))))throw new Error('Проверьте уникальность идентификаторов источников и ссылки фактов.');}saveDoc(d);return json(res,{doc:d});}
  if(action==='clone'){const d=getDoc(b.id);d.id=crypto.randomUUID();d.created=new Date().toISOString();d.reviewed=false;d.report?.claims.forEach(c=>c.reviewed=false);saveDoc(d);return json(res,{doc:d});}

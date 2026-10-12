@@ -3,6 +3,12 @@ import type {Doc} from './types';
 import {disclosure} from './validation';
 export type State={id?:string;url?:string;fileId?:string;uploaded?:boolean;status?:string};
 export const platforms=['archive','osf','figshare','zenodo'] as const;
+export async function checkOsfToken(token:string){
+ const value=token.trim();if(!value||value.length>8192)throw new Error('Введите Personal Access Token OSF.');
+ const profile=await api('https://api.osf.io/v2/users/me/',{method:'GET',headers:{Authorization:`Bearer ${value}`,Accept:'application/vnd.api+json'}});
+ if(profile.data?.type!=='users'||!profile.data?.id)throw new Error('OSF не подтвердил авторизацию токена.');
+ return {ok:true,message:'OSF принял токен. Права на создание проекта и загрузку PDF проверяются при подготовке публикации.'};
+}
 export async function api(url:string,options:RequestInit={}) {
  const r=await fetch(url,{...options,redirect:'manual',signal:AbortSignal.timeout(60000)});
  if(!r.ok)throw new Error(`Сервис ответил HTTP ${r.status}. Проверьте доступ и ограничения аккаунта.`);
