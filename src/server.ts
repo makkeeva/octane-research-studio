@@ -10,6 +10,7 @@ import {generateReport} from '../lib/research/ai';
 import {makePdf} from '../lib/research/pdf';
 import {platforms,prepare,publish,reconcile,api} from '../lib/research/publish';
 import type {Doc} from '../lib/research/types';
+import {requestPolicy} from '../lib/research/request-origin';
 const password=process.env.APP_PASSWORD||'';
 if(password.length<12)throw new Error('Set APP_PASSWORD (at least 12 characters) in .env before starting.');
 const port=Number(process.env.PORT||3000),host=process.env.HOST||'127.0.0.1';
@@ -25,7 +26,7 @@ function editable(id:string){if(generating.has(id))throw new Error('Для эт�
 function creds(p:string,c:any={}){return {token:c.token||process.env[p.toUpperCase()+'_TOKEN'],access:c.access||process.env.ARCHIVE_ACCESS_KEY,secret:c.secret||process.env.ARCHIVE_SECRET_KEY,category:c.category,license:c.license};}
 function session(req:IncomingMessage){const cookie=req.headers.cookie||'';const token=cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('studio_session='))?.split('=')[1];return token&&sessions.get(token)!==undefined&&sessions.get(token)!>Date.now()?token:null;}
 async function body(req:IncomingMessage){let text='';for await(const chunk of req){text+=chunk;if(text.length>180000)throw new Error('Запрос слишком большой.');}return JSON.parse(text||'{}');}
-function allowedOrigin(value:string){return publicUrl?value===publicUrl:[`http://localhost:${port}`,`http://127.0.0.1:${port}`].includes(value);}
+const policy=requestPolicy(publicUrl,port);
 createServer(async(req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','SAMEORIGIN');res.setHeader('Referrer-Policy','no-referrer');
  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self' blob:; img-src 'self' data:; object-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'");
@@ -33,8 +34,8 @@ createServer(async(req,res)=>{
  try{
  const url=new URL(req.url||'/','http://localhost');const action=url.pathname.slice('/api/'.length);const method=req.method||'GET';
  if(url.pathname==='/api/health'&&method==='GET')return json(res,{ok:true});
- if(!allowedOrigin((secure?'https://':'http://')+(req.headers.host||'')))return json(res,{error:'Host is not allowed. Set PUBLIC_URL to the application origin.'},403);
- if(method==='POST'&&!allowedOrigin(req.headers.origin||''))return json(res,{error:'Недопустимый источник запроса.'},403);
+ if(!policy.hostAllowed(req))return json(res,{error:'Host is not allowed. Set PUBLIC_URL to the application origin.'},403);
+ if(method==='POST'&&!policy.postAllowed(req))return json(res,{error:'Недопустимый источник запроса.'},403);
  if(url.pathname==='/api/login'&&method==='POST'){
  const ip=req.socket.remoteAddress||'local';const attempt=loginAttempts.get(ip);if(attempt&&attempt.until>Date.now()&&attempt.count>=8)return json(res,{error:'Слишком много попыток. Повторите через 15 минут.'},429);
  const b=await body(req);const supplied=Buffer.from(String(b.password||''));const expected=Buffer.from(password);if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected)){const current=attempt&&attempt.until>Date.now()?attempt:{count:0,until:Date.now()+15*60000};current.count++;loginAttempts.set(ip,current);return json(res,{error:'Неверный пароль.'},401);}
