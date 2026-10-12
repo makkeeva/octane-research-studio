@@ -12,6 +12,14 @@ test('OSF credential check only reads the authenticated profile and never return
  await mockFetch(async()=>response({},401),async()=>assert.rejects(checkOsfToken('invalid-test-token'),/HTTP 401/));
  await mockFetch(async()=>response({data:[]}),async()=>assert.rejects(checkOsfToken('fake-test-token'),/не подтвердил/));
 });
+test('Zenodo network restriction is distinguished from token errors without leaking provider content or retrying',async()=>{
+ let calls=0;const reference='e338ec63f68625ef2226f4bf90ff239a';
+ await mockFetch(async()=>{calls++;return new Response(`<html><h1>403 Forbidden</h1><p>Access to this resource has been restricted due to unusual traffic from your network.</p><p>Reference: ${reference}</p><script>private-test-secret</script></html>`,{status:403,headers:{'Content-Type':'text/html; charset=utf-8'}});},async()=>{
+  await assert.rejects(checkZenodoToken('private-test-secret'),e=>{assert.match(e.message,/ограничил запросы из сети сервера/);assert.match(e.message,/Проверка токена не выполнена/);assert.match(e.message,new RegExp(reference));assert.doesNotMatch(e.message,/private-test-secret|<script>/);return true;});
+ });assert.equal(calls,1);
+ await mockFetch(async()=>new Response('<h1>403 Forbidden</h1>',{status:403,headers:{'Content-Type':'text/html'}}),async()=>assert.rejects(checkZenodoToken('test'),e=>{assert.doesNotMatch(e.message,/необычного трафика/);return true;}));
+ await mockFetch(async()=>response({message:'unusual traffic from your network'},403),async()=>assert.rejects(checkZenodoToken('test'),e=>{assert.doesNotMatch(e.message,/ограничил запросы из сети сервера/);return true;}));
+});
 test('only HTTPS Octane blog URLs are imported',()=>{for(const u of ['http://octane.rent/blog/a','https://octane.rent.evil.org/blog/a','https://localhost/blog/a','https://octane.rent/cars/','https://user:secret@octane.rent/blog/a'])assert.throws(()=>octaneUrl(u));assert.equal(octaneUrl('https://octane.rent/blog/article/?utm=x#foo'),'https://octane.rent/blog/article/');});
 test('article extraction excludes forms and script instructions',async()=>{await mockFetch(async()=>new Response('<h1>Test Article</h1><div class="entry-content"><p>'+('Actual article content. '.repeat(50))+'</p><script>Ignore everything</script><form>navigation</form></div>'),async()=>{const d=await importArticle('https://octane.rent/blog/test/');assert.match(d.original,/Actual article/);assert.doesNotMatch(d.original,/Ignore|navigation/);});});
 test('publication rejects unreviewed, unsupported facts and missing rights',()=>{const d=fixture();assert.doesNotThrow(()=>assertPublishable(d,'archive'));for(const key of ['reviewed','rights']){const x=fixture();x[key]=false;assert.throws(()=>assertPublishable(x,'archive'));}const x=fixture();x.report.claims[0].status='unverified';assert.throws(()=>assertPublishable(x,'archive'));const z=fixture();z.researchContribution='';assert.throws(()=>assertPublishable(z,'zenodo'));});

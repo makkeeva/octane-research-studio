@@ -34,8 +34,17 @@ export async function checkOsfToken(token:string){
 }
 export async function api(url:string,options:RequestInit={}) {
  const r=await fetch(url,{...options,redirect:'manual',signal:AbortSignal.timeout(60000)});
- if(!r.ok)throw new Error(`Сервис ответил HTTP ${r.status}. Проверьте доступ и ограничения аккаунта.`);
- const t=await r.text();try{return t?JSON.parse(t):{};}catch{return {};}
+ const t=await r.text();
+ if(!r.ok){
+  // A network security page is not a response from the token validation API.
+  // Never expose arbitrary provider bodies: they may contain secrets or HTML.
+  if(new URL(url).hostname==='zenodo.org'&&r.status===403&&/text\/html/i.test(r.headers.get('content-type')||'')&&/unusual traffic from your network/i.test(t)){
+   const reference=t.match(/Reference:\s*(?:<[^>]*>\s*)*([a-f0-9]{32})\b/i)?.[1];
+   throw new Error('Zenodo HTTP 403: сервис ограничил запросы из сети сервера из-за необычного трафика. Проверка токена не выполнена; пересоздавать его не требуется. Обратитесь в поддержку Zenodo для снятия ограничения сети.'+(reference?' Код обращения: '+reference+'.':''));
+  }
+  throw new Error(`Сервис ответил HTTP ${r.status}. Проверьте доступ и ограничения аккаунта.`);
+ }
+ try{return t?JSON.parse(t):{};}catch{return {};}
 }
 function safeLink(url:string,hosts:string[]){const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.port||!hosts.some(h=>u.hostname===h||u.hostname.endsWith('.'+h)))throw new Error('Сервис вернул недопустимый адрес загрузки.');return u.toString();}
 const payload=(data:any)=>JSON.stringify(data);
