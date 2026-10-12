@@ -3,6 +3,23 @@ import type {Doc} from './types';
 import {disclosure} from './validation';
 export type State={id?:string;url?:string;fileId?:string;uploaded?:boolean;status?:string};
 export const platforms=['archive','osf','figshare','zenodo'] as const;
+export async function checkConnection(platform:string,credentials:any){
+ if(platform==='osf')return checkOsfToken(credentials.token||'');
+ if(platform==='zenodo')return checkZenodoToken(credentials.token||'');
+ if(platform==='figshare'){
+  const token=String(credentials.token||'').trim();if(!token)throw new Error('Введите Personal Access Token Figshare.');
+  const records=await api('https://api.figshare.com/v2/account/articles?page_size=1',{method:'GET',headers:{Authorization:`token ${token}`,Accept:'application/json'}});
+  if(!Array.isArray(records))throw new Error('Figshare не подтвердил авторизацию токена.');
+  return {ok:true,message:'Figshare принял токен. Права на загрузку и публикацию проверяются при отправке PDF.'};
+ }
+ if(platform==='archive'){
+  if(!credentials.access||!credentials.secret)throw new Error('Введите Access Key и Secret Key Internet Archive.');
+  const identity=await api('https://archive.org/services/user.php?op=whoami',{method:'GET',headers:{Authorization:`LOW ${credentials.access}:${credentials.secret}`,Accept:'application/json'}});
+  if(typeof identity!=='string'||!identity.includes('@'))throw new Error('Internet Archive не подтвердил авторизацию ключей.');
+  return {ok:true,message:'Internet Archive принял ключи. Права на загрузку проверяются при отправке PDF.'};
+ }
+ throw new Error('Неизвестная площадка.');
+}
 export async function checkZenodoToken(token:string){
  const value=token.trim();if(!value||value.length>8192)throw new Error('Введите Personal Access Token Zenodo.');
  const records=await api('https://zenodo.org/api/deposit/depositions?size=1',{method:'GET',headers:{Authorization:`Bearer ${value}`,Accept:'application/json'}});
