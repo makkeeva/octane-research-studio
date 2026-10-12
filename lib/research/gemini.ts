@@ -3,19 +3,21 @@ import {reportInstructions,validateReportText} from './ai';
 
 export const GEMINI_MODEL='gemini-2.5-flash';
 const base='https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL;
-const string=(maxLength:number)=>({type:'string',maxLength});
+const string=(maxLength:number)=>({type:'string',description:`At most ${maxLength} characters.`});
 const object=(properties:any)=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
 export const geminiReportSchema=object({
- title:{...string(300),minLength:5},abstract:string(4000),
- sections:{type:'array',minItems:2,maxItems:15,items:object({heading:string(200),body:string(12000)})},
- sources:{type:'array',minItems:2,maxItems:30,items:object({id:{type:'string',pattern:'^S[0-9]+$'},title:string(300),url:{type:'string'},publisher:string(200),date:string(80),accessed:string(80)})},
- claims:{type:'array',minItems:1,maxItems:60,items:object({text:string(1500),sourceIds:{type:'array',minItems:1,items:{type:'string'}},evidence:string(350),status:{type:'string',enum:['supported','unverified','conflict']},reviewed:{type:'boolean'}})},
+ title:string(300),abstract:string(4000),
+ sections:{type:'array',items:object({heading:string(200),body:string(12000)})},
+ sources:{type:'array',items:object({id:{type:'string',description:'Source ID such as S1 or S2.'},title:string(300),url:{type:'string'},publisher:string(200),date:string(80),accessed:string(80)})},
+ claims:{type:'array',items:object({text:string(1500),sourceIds:{type:'array',items:{type:'string'}},evidence:string(350),status:{type:'string',enum:['supported','unverified','conflict']},reviewed:{type:'boolean'}})},
  limitations:string(4000),disclosure:string(2000)
 });
 async function geminiRequest(key:string,payload?:any){
  const token=key.trim();if(!token||token.length>8192)throw new Error('Введите API-ключ Gemini.');
  const r=await fetch(base+(payload?':generateContent':''),{method:payload?'POST':'GET',headers:{'x-goog-api-key':token,Accept:'application/json',...(payload?{'Content-Type':'application/json'}:{})},body:payload?JSON.stringify(payload):undefined,redirect:'manual',signal:AbortSignal.timeout(payload?110000:30000)});
  if(!r.ok){
+  let response:any;try{response=await r.json();}catch{}
+  if(r.status===400&&/schema|too many states|invalid json payload/i.test(String(response?.error?.message||'')))throw new Error('Gemini HTTP 400. Сервис отклонил запрос приложения. Ключ сохранён; отчёт не создан.');
   const hint=r.status===429?'Достигнут лимит Gemini. Повторите позже; автоматического перехода на платный сервис нет.':r.status===401||r.status===400?'Проверьте ключ Gemini и настройки проекта.':r.status===403?'Проверьте доступ проекта к Gemini API и доступность сервиса в вашем регионе.':r.status===404?'Gemini 2.5 Flash недоступна этому проекту.':'Сервис временно недоступен.';
   throw new Error(`Gemini HTTP ${r.status}. ${hint}`);
  }
