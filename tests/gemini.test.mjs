@@ -13,7 +13,12 @@ test('Gemini key check is read-only, uses a header and does not leak model metad
 });
 test('Gemini searches before JSON drafting, verifies provenance and resets review flags',async()=>{
  let calls=0;
- await mocked(async(url,options)=>{assert.equal(url,modelUrl+':generateContent');const body=JSON.parse(options.body);calls++;if(calls===1){assert.deepEqual(body.tools,[{googleSearch:{}}]);assert.equal(body.generationConfig.responseMimeType,undefined);return reply(search());}assert.equal(body.tools,undefined);assert.equal(body.generationConfig.responseMimeType,'application/json');assert.match(body.contents[0].parts[0].text,/groundingSources/);return reply(report());},async()=>{const result=await generateGeminiReport(fixture(),'test-key');assert.equal(result.claims[0].reviewed,false);assert.match(result.searchSuggestionsHtml,/Google/);assert.match(result.disclosure,/human author/i);});assert.equal(calls,2);
+ const stages=[];
+ await mocked(async(url,options)=>{assert.equal(url,modelUrl+':generateContent');const body=JSON.parse(options.body);calls++;if(calls===1){assert.deepEqual(body.tools,[{googleSearch:{}}]);assert.equal(body.generationConfig.responseMimeType,undefined);return reply(search());}assert.equal(body.tools,undefined);assert.equal(body.generationConfig.responseMimeType,'application/json');assert.deepEqual(body.generationConfig.responseJsonSchema.properties.claims.items.properties.status.enum,['supported','unverified','conflict']);assert.equal(body.generationConfig.responseJsonSchema.properties.claims.items.properties.evidence.maxLength,350);assert.match(body.contents[0].parts[0].text,/groundingSources/);return reply(report());},async()=>{const result=await generateGeminiReport(fixture(),'test-key',stage=>stages.push(stage));assert.equal(result.claims[0].reviewed,false);assert.match(result.searchSuggestionsHtml,/Google/);assert.match(result.disclosure,/human author/i);});assert.equal(calls,2);assert.equal(stages.length,3);
+});
+test('Gemini never treats the invalid verified claim status as supported',async()=>{
+ const invalid=fixture();invalid.report.claims[0].status='verified';let calls=0;
+ await mocked(async()=>reply(++calls===1?search():report(invalid)),async()=>assert.rejects(generateGeminiReport(fixture(),'test-key'),/Invalid enum value/));assert.equal(calls,2);
 });
 test('Gemini rejects absent search sources, invented citations, truncated answers and exhausted quotas without retry or provider fallback',async()=>{
  let calls=0;

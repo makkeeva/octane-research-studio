@@ -6,3 +6,4 @@ export {CredentialStore} from '../lib/research/credentials';
 export {generateReport} from '../lib/research/ai';
 
 export {generateGeminiReport,checkGeminiKey,GEMINI_MODEL} from '../lib/research/gemini';
+export {GenerationJobs} from '../lib/research/generation-jobs';

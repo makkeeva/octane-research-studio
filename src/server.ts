@@ -13,6 +13,7 @@ import {platforms,prepare,publish,reconcile,api,checkConnection} from '../lib/re
 import {CredentialStore} from '../lib/research/credentials';
 import type {Doc} from '../lib/research/types';
 import {requestPolicy} from '../lib/research/request-origin';
+import {GenerationJobs} from '../lib/research/generation-jobs';
 const password=process.env.APP_PASSWORD||'';
 if(password.length<12)throw new Error('Set APP_PASSWORD (at least 12 characters) in .env before starting.');
 const port=Number(process.env.PORT||3000),host=process.env.HOST||'127.0.0.1';
@@ -23,12 +24,12 @@ db.exec('CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,expires
 const credentialStore=new CredentialStore(db,password);
 const connectable=[...platforms,'gemini'];
 const sessionHash=(token:string)=>createHmac('sha256',password).update(token).digest('hex');
-const generating=new Set<string>();const loginAttempts=new Map<string,{count:number;until:number}>();
+const generationJobs=new GenerationJobs(db);const loginAttempts=new Map<string,{count:number;until:number}>();
 const publicUrl=process.env.PUBLIC_URL?new URL(process.env.PUBLIC_URL).origin:'';const secure=publicUrl.startsWith('https://');
 function json(res:ServerResponse,data:any,status=200){res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
 function getDoc(id:string):Doc{const row:any=db.prepare('SELECT data FROM documents WHERE id=?').get(id);if(!row)throw new Error('Документ не найден.');return JSON.parse(row.data);}
 function saveDoc(d:Doc){db.prepare('INSERT INTO documents(id,data,updated) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated=excluded.updated').run(d.id,JSON.stringify(d),new Date().toISOString());}
-function editable(id:string){if(generating.has(id))throw new Error('Для этого документа уже идёт генерация.');if(db.prepare('SELECT key FROM publications WHERE doc_id=? LIMIT 1').get(id))throw new Error('Публикация уже подготовлена. Для изменений создайте копию.');}
+function editable(id:string){if(generationJobs.active(id))throw new Error('Для этого документа уже идёт генерация.');if(db.prepare('SELECT key FROM publications WHERE doc_id=? LIMIT 1').get(id))throw new Error('Публикация уже подготовлена. Для изменений создайте копию.');}
 function creds(p:string,c:any={}){const stored=credentialStore.read(p);return {token:c.token||stored.token||(p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']),access:c.access||stored.access||process.env.ARCHIVE_ACCESS_KEY,secret:c.secret||stored.secret||process.env.ARCHIVE_SECRET_KEY,category:c.category||stored.category,license:c.license||stored.license};}
 function connectionConfig(){const details=Object.fromEntries(connectable.map(p=>{const metadata=credentialStore.metadata(p);const envConfigured=p==='archive'?Boolean(process.env.ARCHIVE_ACCESS_KEY&&process.env.ARCHIVE_SECRET_KEY):Boolean((p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']));let defaults:any={};if(p==='figshare'&&metadata.saved){try{const saved=credentialStore.read(p);defaults={category:saved.category,license:saved.license};}catch{}}return [p,{...metadata,configured:metadata.saved||envConfigured,defaults}];}));const gemini=details.gemini.configured;return {ai:gemini||Boolean(process.env.OPENAI_API_KEY),aiProvider:gemini?'gemini':process.env.OPENAI_API_KEY?'openai':'gemini',model:gemini||!process.env.OPENAI_API_KEY?GEMINI_MODEL:process.env.OPENAI_MODEL||'gpt-4.1',connected:Object.fromEntries(connectable.map(p=>[p,details[p].configured])),connections:details};}
 function session(req:IncomingMessage){const cookie=req.headers.cookie||'';const token=cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('studio_session='))?.split('=')[1];if(!token||!/^[a-f0-9]{64}$/.test(token))return null;const hash=sessionHash(token);const row=db.prepare('SELECT expires FROM sessions WHERE token_hash=?').get(hash) as {expires:number}|undefined;return row&&row.expires>Date.now()?hash:null;}
@@ -53,6 +54,7 @@ createServer(async(req,res)=>{
  if(action==='logout'&&method==='POST'){db.prepare('DELETE FROM sessions WHERE token_hash=?').run(logged);res.setHeader('Set-Cookie','studio_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,{ok:true});}
  if(method==='GET'){
  if(action==='status')return json(res,connectionConfig());
+ if(action==='generation'){const id=url.searchParams.get('id')||'';const d=getDoc(id);const job:any=generationJobs.get(id);return json(res,{job,...(job?.status==='done'?{doc:d}:{})});}
  if(action==='articles')return json(res,{articles:await listArticles(Math.max(1,Math.min(21,Number(url.searchParams.get('page'))||1)))});
  if(action==='documents')return json(res,{documents:db.prepare('SELECT data FROM documents ORDER BY updated DESC LIMIT 100').all().map((r:any)=>JSON.parse(r.data))});
  if(action==='publications'){const doc=getDoc(url.searchParams.get('id')||'');return json(res,{publications:db.prepare('SELECT * FROM publications WHERE doc_id=?').all(doc.id).map((r:any)=>({...r,state:JSON.parse(r.state)}))});}
@@ -79,7 +81,7 @@ createServer(async(req,res)=>{
  if(action==='save'){const d=docSchema.parse(b.doc);editable(d.id);if(d.report){const ids=new Set(d.report.sources.map(s=>s.id));if(ids.size!==d.report.sources.length||d.report.claims.some(c=>c.sourceIds.some(id=>!ids.has(id))))throw new Error('Проверьте уникальность идентификаторов источников и ссылки фактов.');}saveDoc(d);return json(res,{doc:d});}
  if(action==='clone'){const d=getDoc(b.id);d.id=crypto.randomUUID();d.created=new Date().toISOString();d.reviewed=false;d.report?.claims.forEach(c=>c.reviewed=false);saveDoc(d);return json(res,{doc:d});}
  if(action==='delete'){editable(b.id);db.prepare('DELETE FROM documents WHERE id=?').run(b.id);return json(res,{ok:true});}
- if(action==='generate'){const d=getDoc(b.id);editable(d.id);const geminiKey=creds('gemini').token;if(!geminiKey&&!process.env.OPENAI_API_KEY)throw new Error('Откройте «Подключения», вставьте API-ключ Gemini и нажмите «Сохранить и проверить».');generating.add(d.id);try{d.report=geminiKey?await generateGeminiReport(d,geminiKey):await generateReport(d,process.env.OPENAI_API_KEY!,process.env.OPENAI_MODEL||'gpt-4.1');d.reviewed=false;saveDoc(d);return json(res,{doc:d});}finally{generating.delete(d.id);}}
+ if(action==='generate'){const d=getDoc(b.id);if(generationJobs.active(d.id))return json(res,{job:generationJobs.get(d.id)},202);editable(d.id);const geminiKey=creds('gemini').token;if(!geminiKey&&!process.env.OPENAI_API_KEY)throw new Error('Откройте «Подключения», вставьте API-ключ Gemini и нажмите «Сохранить и проверить».');const job=generationJobs.start(d.id,progress=>geminiKey?generateGeminiReport(d,geminiKey,progress):generateReport(d,process.env.OPENAI_API_KEY!,process.env.OPENAI_MODEL||'gpt-4.1'),report=>{d.report=report;d.reviewed=false;saveDoc(d);});return json(res,{job},202);}
  if(action==='publish'){
  const d=getDoc(b.id);const p=b.platform;if(!platforms.includes(p))throw new Error('Неизвестная площадка.');assertPublishable(d,p);publicationKey=d.id+':'+p;
  const old:any=db.prepare('SELECT * FROM publications WHERE key=?').get(publicationKey);let state=old?JSON.parse(old.state):{};const credentials=creds(p,b.credentials);
