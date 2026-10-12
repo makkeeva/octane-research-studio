@@ -14,8 +14,9 @@ export async function checkConnection(platform:string,credentials:any){
  }
  if(platform==='archive'){
   if(!credentials.access||!credentials.secret)throw new Error('Введите Access Key и Secret Key Internet Archive.');
-  const identity=await api('https://archive.org/services/user.php?op=whoami',{method:'GET',headers:{Authorization:`LOW ${credentials.access}:${credentials.secret}`,Accept:'application/json'}});
-  if(typeof identity!=='string'||!identity.includes('@'))throw new Error('Internet Archive не подтвердил авторизацию ключей.');
+  const identity=await api('https://archive.org/services/user.php?op=whoami',{method:'GET',headers:{Authorization:`LOW ${credentials.access}:${credentials.secret}`,Accept:'application/json','User-Agent':'OctaneResearchStudio/1.0 (+https://github.com/makkeeva/octane-research-studio)'}});
+  const account=typeof identity==='string'?identity:identity?.success===true?identity.value?.username:undefined;
+  if(typeof account!=='string'||!account.includes('@'))throw new Error('Internet Archive не подтвердил авторизацию ключей.');
   return {ok:true,message:'Internet Archive принял ключи. Права на загрузку проверяются при отправке PDF.'};
  }
  throw new Error('Неизвестная площадка.');

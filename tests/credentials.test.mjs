@@ -31,6 +31,11 @@ test('Archive and Figshare credential checks only read account data and reject a
  try{
   globalThis.fetch=async(url,options)=>{assert.equal(url,'https://archive.org/services/user.php?op=whoami');assert.equal(options.method,'GET');assert.equal(options.headers.Authorization,'LOW access-for-test:secret-for-test');return new Response(JSON.stringify('private-user@example.test'));};
   const archive=await checkConnection('archive',{access:'access-for-test',secret:'secret-for-test'});assert.equal(archive.ok,true);assert.doesNotMatch(JSON.stringify(archive),/private-user|access-for-test|secret-for-test/);
+  globalThis.fetch=async(url,options)=>{assert.match(options.headers['User-Agent'],/OctaneResearchStudio/);return new Response(JSON.stringify({success:true,value:{username:'private-user@example.test',screenname:'Private display name',privs:{private:true}}}));};
+  const currentArchive=await checkConnection('archive',{access:'access-for-test',secret:'secret-for-test'});assert.equal(currentArchive.ok,true);assert.doesNotMatch(JSON.stringify(currentArchive),/private-user|Private display name|privs|access-for-test|secret-for-test/);
+  for(const identity of [{success:false,value:{username:'private-user@example.test'}},{success:true,value:{}},{success:true,value:{username:123}},{value:{username:'private-user@example.test'}}]){
+   globalThis.fetch=async()=>new Response(JSON.stringify(identity));await assert.rejects(checkConnection('archive',{access:'access-for-test',secret:'secret-for-test'}),/не подтвердил/);
+  }
   globalThis.fetch=async()=>new Response(JSON.stringify(''));await assert.rejects(checkConnection('archive',{access:'access-for-test',secret:'secret-for-test'}),/не подтвердил/);
   globalThis.fetch=async(url,options)=>{assert.equal(url,'https://api.figshare.com/v2/account/articles?page_size=1');assert.equal(options.method,'GET');assert.equal(options.headers.Authorization,'token figshare-test-token');return new Response('[]');};
   assert.equal((await checkConnection('figshare',{token:'figshare-test-token'})).ok,true);
