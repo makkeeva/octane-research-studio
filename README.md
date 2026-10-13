@@ -16,6 +16,8 @@ cd octane-research-studio
 bash scripts/docker-local.sh
 ```
 
+На Windows в PowerShell вместо последней команды выполните `powershell -NoProfile -File scripts/docker-local.ps1`. Docker Desktop должен использовать Linux containers. Для копии по другому пути добавьте `-BackupFile "C:\полный\путь\octane-local-backup.enc.json"`.
+
 Скрипт задаёт локальный PUBLIC_URL, запускает приложение на порту **3001** и сохраняет существующие пароль и ключи. При первом запуске без резервной копии попросит придумать пароль приложения; ввод скрыт. Откройте **http://localhost:3001**. Если репозиторий уже скачан, выполните в его папке `git pull --ff-only`, затем `bash scripts/docker-local.sh`.
 
 ### Перенос из Codespaces
