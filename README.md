@@ -1,5 +1,7 @@
 # Octane Research Studio
 
+Для продолжения работы другим ИИ: [README_FOR_NEXT_AI.md](README_FOR_NEXT_AI.md) — состояние проекта, запуск Docker, перенос данных и оставшиеся задачи.
+
 Основной запуск — Docker на вашем ноутбуке: http://localhost:3001. Документы, PDF и зашифрованные подключения сохраняются в отдельном томе; приложение доступно, пока ноутбук и Docker работают. GitHub Codespaces используется для разработки: остановка по бездействию отключает адрес `app.github.dev`.
 
 Дополнительная приватная версия: https://octane-research-studio.sf-education-4624.chatgpt.site (код в `hosted/`). Данные из Codespaces туда автоматически не переносятся.
