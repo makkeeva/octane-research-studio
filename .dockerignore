@@ -6,3 +6,6 @@ dist
 !.env.example
 .git
 *.log
+hosted
+*.enc.json
+*.backup

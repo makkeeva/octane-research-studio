@@ -2,6 +2,10 @@ node_modules/
 dist/
 .data/
 .env
+*.enc.json
+*.backup
+.env.before-restore-*
+.data.restore-*
 .env.*
 !.env.example
 *.log
