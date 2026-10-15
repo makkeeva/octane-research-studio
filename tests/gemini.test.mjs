@@ -39,3 +39,12 @@ test('Gemini repairs oversized evidence once using the same research and still v
  calls=0;await mocked(async()=>reply(++calls===1?search():report(oversized)),async()=>assert.rejects(generateGeminiReport(fixture(),'test-key'),e=>e.name==='ZodError'));assert.equal(calls,3);
  calls=0;await mocked(async()=>++calls===1?reply(search()):calls===2?reply(report(oversized)):reply({},429),async()=>assert.rejects(generateGeminiReport(fixture(),'test-key'),/лимит Gemini/));assert.equal(calls,3);
 });
+test('Gemini drafts a human-editable research contribution surfaced on the report',async()=>{
+ let calls=0;
+ const withContribution={...fixture().report,contribution:'Independently located primary sources and cross-checked the key figures, dates and units against them; flagged unsupported statements and noted the main limitation.'};
+ await mocked(async()=>reply(++calls===1?search():{candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(withContribution)}]}}]}),async()=>{
+  const result=await generateGeminiReport(fixture(),'test-key');
+  assert.match(result.contribution,/cross-checked/);
+ });
+ assert.equal(calls,2);
+});

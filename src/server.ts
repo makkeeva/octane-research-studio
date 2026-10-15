@@ -62,7 +62,7 @@ async function runAutoDraft(limit=autoDraftMax){
    const doc:Doc={...source,id:crypto.randomUUID(),created:new Date().toISOString(),language:autoDraftLanguage,author:docDefaultAuthor,license:docDefaultLicense,report:null,reviewed:false,rights:docDefaultRights,researchContribution:''};
    saveDoc(doc);
    const report=await generateGeminiReport(doc,geminiKey);
-   doc.report=report;doc.reviewed=false;saveDoc(doc);created++;
+   const c=(report as any).contribution;delete (report as any).contribution;doc.report=report;if(typeof c==='string'&&c.trim())doc.researchContribution=c.trim();doc.reviewed=false;saveDoc(doc);created++;
   }catch(e:any){failed++;const message=e?.message||'ошибка';errors.push(message);if(/HTTP 429|лимит/i.test(message))break;}
  }
  return {created,failed,candidates:fresh.length,sitemapTotal:articleUrls.length,errors:errors.slice(0,3),at:new Date().toISOString()};
@@ -128,7 +128,7 @@ createServer(async(req,res)=>{
  if(action==='save'){const d=docSchema.parse(b.doc);editable(d.id);if(d.report){const ids=new Set(d.report.sources.map(s=>s.id));if(ids.size!==d.report.sources.length||d.report.claims.some(c=>c.sourceIds.some(id=>!ids.has(id))))throw new Error('Проверьте уникальность идентификаторов источников и ссылки фактов.');}saveDoc(d);return json(res,{doc:d});}
  if(action==='clone'){const d=getDoc(b.id);d.id=crypto.randomUUID();d.created=new Date().toISOString();d.reviewed=false;d.report?.claims.forEach(c=>c.reviewed=false);saveDoc(d);return json(res,{doc:d});}
  if(action==='delete'){editable(b.id);db.prepare('DELETE FROM documents WHERE id=?').run(b.id);return json(res,{ok:true});}
- if(action==='generate'){const d=getDoc(b.id);if(generationJobs.active(d.id))return json(res,{job:generationJobs.get(d.id)},202);editable(d.id);const geminiKey=creds('gemini').token;if(!geminiKey&&!process.env.OPENAI_API_KEY)throw new Error('Откройте «Подключения», вставьте API-ключ Gemini и нажмите «Сохранить и проверить».');const job=generationJobs.start(d.id,progress=>geminiKey?generateGeminiReport(d,geminiKey,progress):generateReport(d,process.env.OPENAI_API_KEY!,process.env.OPENAI_MODEL||'gpt-4.1'),report=>{d.report=report;d.reviewed=false;saveDoc(d);});return json(res,{job},202);}
+ if(action==='generate'){const d=getDoc(b.id);if(generationJobs.active(d.id))return json(res,{job:generationJobs.get(d.id)},202);editable(d.id);const geminiKey=creds('gemini').token;if(!geminiKey&&!process.env.OPENAI_API_KEY)throw new Error('Откройте «Подключения», вставьте API-ключ Gemini и нажмите «Сохранить и проверить».');const job=generationJobs.start(d.id,progress=>geminiKey?generateGeminiReport(d,geminiKey,progress):generateReport(d,process.env.OPENAI_API_KEY!,process.env.OPENAI_MODEL||'gpt-4.1'),report=>{const c=(report as any).contribution;delete (report as any).contribution;d.report=report;if(typeof c==='string'&&c.trim()&&!d.researchContribution.trim())d.researchContribution=c.trim();d.reviewed=false;saveDoc(d);});return json(res,{job},202);}
  if(action==='publish'){
  const d=getDoc(b.id);const p=b.platform;if(!platforms.includes(p))throw new Error('Неизвестная площадка.');assertPublishable(d,p);publicationKey=d.id+':'+p;
  const old:any=db.prepare('SELECT * FROM publications WHERE key=?').get(publicationKey);let state=old?JSON.parse(old.state):{};const credentials=creds(p,b.credentials);
