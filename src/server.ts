@@ -32,6 +32,10 @@ const stateSet=(k:string,v:string)=>db.prepare('INSERT INTO app_state(key,value)
 const autoDraftMax=Math.max(1,Math.min(10,Number(process.env.AUTO_DRAFT_MAX||3)));
 const autoDraftHour=Math.max(0,Math.min(23,Number(process.env.AUTO_DRAFT_HOUR||6)));
 const autoDraftLanguage:'English'|'Русский'=process.env.AUTO_DRAFT_LANGUAGE==='Русский'?'Русский':'English';
+// Значения по умолчанию для автора/лицензии/прав — чтобы не заполнять каждый раз вручную.
+const docDefaultAuthor=(process.env.AUTHOR_DEFAULT||'').slice(0,200);
+const docDefaultLicense:''|'cc-by-4.0'|'cc-by-sa-4.0'=process.env.LICENSE_DEFAULT==='cc-by-4.0'||process.env.LICENSE_DEFAULT==='cc-by-sa-4.0'?process.env.LICENSE_DEFAULT:'';
+const docDefaultRights=process.env.RIGHTS_DEFAULT==='true';
 const autoDraftSummary=()=>{try{return JSON.parse(stateGet('auto_last_summary')||'null');}catch{return null;}};
 let autoDraftRunning=false;
 const publicUrl=process.env.PUBLIC_URL?new URL(process.env.PUBLIC_URL).origin:'';const secure=publicUrl.startsWith('https://');
@@ -40,7 +44,7 @@ function getDoc(id:string):Doc{const row:any=db.prepare('SELECT data FROM docume
 function saveDoc(d:Doc){db.prepare('INSERT INTO documents(id,data,updated) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated=excluded.updated').run(d.id,JSON.stringify(d),new Date().toISOString());}
 function editable(id:string){if(generationJobs.active(id))throw new Error('Для этого документа уже идёт генерация.');if(db.prepare('SELECT key FROM publications WHERE doc_id=? LIMIT 1').get(id))throw new Error('Публикация уже подготовлена. Для изменений создайте копию.');}
 function creds(p:string,c:any={}){const stored=credentialStore.read(p);return {token:c.token||stored.token||(p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']),access:c.access||stored.access||process.env.ARCHIVE_ACCESS_KEY,secret:c.secret||stored.secret||process.env.ARCHIVE_SECRET_KEY,category:c.category||stored.category,license:c.license||stored.license};}
-function connectionConfig(){const details=Object.fromEntries(connectable.map(p=>{const metadata=credentialStore.metadata(p);const envConfigured=p==='archive'?Boolean(process.env.ARCHIVE_ACCESS_KEY&&process.env.ARCHIVE_SECRET_KEY):Boolean((p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']));let defaults:any={};if(p==='figshare'&&metadata.saved){try{const saved=credentialStore.read(p);defaults={category:saved.category,license:saved.license};}catch{}}return [p,{...metadata,configured:metadata.saved||envConfigured,defaults}];}));const gemini=details.gemini.configured;return {ai:gemini||Boolean(process.env.OPENAI_API_KEY),aiProvider:gemini?'gemini':process.env.OPENAI_API_KEY?'openai':'gemini',model:gemini||!process.env.OPENAI_API_KEY?GEMINI_MODEL:process.env.OPENAI_MODEL||'gpt-4.1',autoDraftEnabled:true,autoDraftMax,autoDraftHour,autoDraft:autoDraftSummary(),connected:Object.fromEntries(connectable.map(p=>[p,details[p].configured])),connections:details};}
+function connectionConfig(){const details=Object.fromEntries(connectable.map(p=>{const metadata=credentialStore.metadata(p);const envConfigured=p==='archive'?Boolean(process.env.ARCHIVE_ACCESS_KEY&&process.env.ARCHIVE_SECRET_KEY):Boolean((p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']));let defaults:any={};if(p==='figshare'&&metadata.saved){try{const saved=credentialStore.read(p);defaults={category:saved.category,license:saved.license};}catch{}}return [p,{...metadata,configured:metadata.saved||envConfigured,defaults}];}));const gemini=details.gemini.configured;return {ai:gemini||Boolean(process.env.OPENAI_API_KEY),aiProvider:gemini?'gemini':process.env.OPENAI_API_KEY?'openai':'gemini',model:gemini||!process.env.OPENAI_API_KEY?GEMINI_MODEL:process.env.OPENAI_MODEL||'gpt-4.1',autoDraftEnabled:true,autoDraftMax,autoDraftHour,autoDraft:autoDraftSummary(),docDefaults:{author:docDefaultAuthor,license:docDefaultLicense,rights:docDefaultRights},connected:Object.fromEntries(connectable.map(p=>[p,details[p].configured])),connections:details};}
 // Автосоздание черновиков: берём новые статьи из карты сайта и генерируем отчёты
 // последовательно, с ограничением на одну сессию, чтобы не исчерпать бесплатную
 // квоту Gemini. Генерация останавливается на первой ошибке квоты (HTTP 429).
@@ -55,7 +59,7 @@ async function runAutoDraft(limit=autoDraftMax){
  for(const articleUrl of fresh){
   try{
    const source=await importArticle(articleUrl);
-   const doc:Doc={...source,id:crypto.randomUUID(),created:new Date().toISOString(),language:autoDraftLanguage,author:'',license:'',report:null,reviewed:false,rights:false,researchContribution:''};
+   const doc:Doc={...source,id:crypto.randomUUID(),created:new Date().toISOString(),language:autoDraftLanguage,author:docDefaultAuthor,license:docDefaultLicense,report:null,reviewed:false,rights:docDefaultRights,researchContribution:''};
    saveDoc(doc);
    const report=await generateGeminiReport(doc,geminiKey);
    doc.report=report;doc.reviewed=false;saveDoc(doc);created++;
@@ -120,7 +124,7 @@ createServer(async(req,res)=>{
   try{const result=p==='gemini'?await checkGeminiKey(credentials.token||''):await checkConnection(p,credentials);if(!credentialStore.checked(p,undefined,revision))throw new Error('Ключ изменён в другой вкладке. Проверьте подключение заново.');return json(res,{...result,...connectionConfig()});}
   catch(e:any){credentialStore.checked(p,e.message,revision);throw e;}
  }
- if(action==='import'){const source=await importArticle(b.url);const d:Doc={...source,id:crypto.randomUUID(),created:new Date().toISOString(),language:b.language==='Русский'?'Русский':'English',author:'',license:'',report:null,reviewed:false,rights:false,researchContribution:''};saveDoc(d);return json(res,{doc:d});}
+ if(action==='import'){const source=await importArticle(b.url);const d:Doc={...source,id:crypto.randomUUID(),created:new Date().toISOString(),language:b.language==='Русский'?'Русский':'English',author:docDefaultAuthor,license:docDefaultLicense,report:null,reviewed:false,rights:docDefaultRights,researchContribution:''};saveDoc(d);return json(res,{doc:d});}
  if(action==='save'){const d=docSchema.parse(b.doc);editable(d.id);if(d.report){const ids=new Set(d.report.sources.map(s=>s.id));if(ids.size!==d.report.sources.length||d.report.claims.some(c=>c.sourceIds.some(id=>!ids.has(id))))throw new Error('Проверьте уникальность идентификаторов источников и ссылки фактов.');}saveDoc(d);return json(res,{doc:d});}
  if(action==='clone'){const d=getDoc(b.id);d.id=crypto.randomUUID();d.created=new Date().toISOString();d.reviewed=false;d.report?.claims.forEach(c=>c.reviewed=false);saveDoc(d);return json(res,{doc:d});}
  if(action==='delete'){editable(b.id);db.prepare('DELETE FROM documents WHERE id=?').run(b.id);return json(res,{ok:true});}
