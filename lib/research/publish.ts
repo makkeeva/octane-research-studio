@@ -33,8 +33,12 @@ export async function checkOsfToken(token:string){
  if(profile.data?.type!=='users'||!profile.data?.id)throw new Error('OSF не подтвердил авторизацию токена.');
  return {ok:true,message:'OSF принял токен. Права на создание проекта и загрузку PDF проверяются при подготовке публикации.'};
 }
+// Честный идентифицирующий User-Agent: некоторые сервисы (например Zenodo)
+// блокируют запросы с дефолтным UA рантайма как трафик ботов.
+export const userAgent='OctaneResearchStudio/1.0 (+https://github.com/makkeeva/octane-research-studio)';
 export async function api(url:string,options:RequestInit={}) {
- const r=await fetch(url,{...options,redirect:'manual',signal:AbortSignal.timeout(60000)});
+ const headers={'User-Agent':userAgent,...(options.headers as Record<string,string>||{})};
+ const r=await fetch(url,{...options,headers,redirect:'manual',signal:AbortSignal.timeout(60000)});
  const t=await r.text();
  if(!r.ok){
   // A network security page is not a response from the token validation API.
