@@ -43,6 +43,10 @@ export async function api(url:string,options:RequestInit={}) {
    const reference=t.match(/Reference:\s*(?:<[^>]*>\s*)*([a-f0-9]{32})\b/i)?.[1];
    throw new Error('Zenodo HTTP 403: сервис ограничил запросы из сети сервера из-за необычного трафика. Проверка токена не выполнена; пересоздавать его не требуется. Обратитесь в поддержку Zenodo для снятия ограничения сети.'+(reference?' Код обращения: '+reference+'.':''));
   }
+  // Для Figshare и OSF безопасно показать текстовое поле message/detail из JSON-ответа
+  // (без тела целиком и без секретов) — это помогает понять причину отказа.
+  const host=new URL(url).hostname;
+  if(host==='api.figshare.com'||host==='api.osf.io'){let reason='';try{const j=JSON.parse(t);reason=typeof j?.message==='string'?j.message:typeof j?.errors?.[0]?.detail==='string'?j.errors[0].detail:'';}catch{}if(reason)throw new Error(`Сервис ответил HTTP ${r.status}: ${reason.replace(/\s+/g,' ').slice(0,200)}`);}
   throw new Error(`Сервис ответил HTTP ${r.status}. Проверьте доступ и ограничения аккаунта.`);
  }
  try{return t?JSON.parse(t):{};}catch{return {};}
