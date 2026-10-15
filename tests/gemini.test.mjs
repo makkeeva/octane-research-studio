@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {generateGeminiReport,checkGeminiKey,GEMINI_MODEL} from '../dist/test-library.mjs';
+import {generateGeminiReport,generateContribution,checkGeminiKey,GEMINI_MODEL} from '../dist/test-library.mjs';
 import {fixture} from './fixtures.mjs';
 const reply=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
 async function mocked(fetcher,run){const original=globalThis.fetch;globalThis.fetch=fetcher;try{await run();}finally{globalThis.fetch=original;}}
@@ -47,4 +47,12 @@ test('Gemini drafts a human-editable research contribution surfaced on the repor
   assert.match(result.contribution,/cross-checked/);
  });
  assert.equal(calls,2);
+});
+test('generateContribution returns a human-editable draft from the existing report',async()=>{
+ let calls=0;
+ await mocked(async(url,options)=>{calls++;assert.equal(url,modelUrl+':generateContent');const body=JSON.parse(options.body);assert.equal(body.tools,undefined);assert.equal(body.generationConfig.responseMimeType,'application/json');assert.match(body.systemInstruction.parts[0].text,/editorial verification/i);return reply({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({contribution:'Я самостоятельно нашла независимые первоисточники, сверила ключевые числа и даты, отметила неподтверждённые утверждения и обозначила ограничения анализа.'})}]}}]});},async()=>{
+  const text=await generateContribution(fixture(),'test-key');
+  assert.match(text,/первоисточник/);
+ });
+ assert.equal(calls,1);
 });

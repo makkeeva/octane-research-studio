@@ -7,7 +7,7 @@ import {randomBytes,timingSafeEqual,createHmac} from 'node:crypto';
 import {docSchema,assertPublishable} from '../lib/research/validation';
 import {importArticle,listArticles,listSitemapArticles,selectNewArticles} from '../lib/research/source';
 import {generateReport} from '../lib/research/ai';
-import {generateGeminiReport,checkGeminiKey,GEMINI_MODEL} from '../lib/research/gemini';
+import {generateGeminiReport,generateContribution,checkGeminiKey,GEMINI_MODEL} from '../lib/research/gemini';
 import {makePdf} from '../lib/research/pdf';
 import {platforms,prepare,publish,reconcile,api,checkConnection} from '../lib/research/publish';
 import {CredentialStore} from '../lib/research/credentials';
@@ -129,6 +129,7 @@ createServer(async(req,res)=>{
  if(action==='clone'){const d=getDoc(b.id);d.id=crypto.randomUUID();d.created=new Date().toISOString();d.reviewed=false;d.report?.claims.forEach(c=>c.reviewed=false);saveDoc(d);return json(res,{doc:d});}
  if(action==='delete'){editable(b.id);db.prepare('DELETE FROM documents WHERE id=?').run(b.id);return json(res,{ok:true});}
  if(action==='generate'){const d=getDoc(b.id);if(generationJobs.active(d.id))return json(res,{job:generationJobs.get(d.id)},202);editable(d.id);const geminiKey=creds('gemini').token;if(!geminiKey&&!process.env.OPENAI_API_KEY)throw new Error('Откройте «Подключения», вставьте API-ключ Gemini и нажмите «Сохранить и проверить».');const job=generationJobs.start(d.id,progress=>geminiKey?generateGeminiReport(d,geminiKey,progress):generateReport(d,process.env.OPENAI_API_KEY!,process.env.OPENAI_MODEL||'gpt-4.1'),report=>{const c=(report as any).contribution;delete (report as any).contribution;d.report=report;if(typeof c==='string'&&c.trim()&&!d.researchContribution.trim())d.researchContribution=c.trim();d.reviewed=false;saveDoc(d);});return json(res,{job},202);}
+ if(action==='contribution'){const d=getDoc(b.id);const geminiKey=creds('gemini').token;if(!geminiKey)throw new Error('Подключите Gemini, чтобы сгенерировать черновик вклада.');const text=await generateContribution(d,geminiKey);return json(res,{contribution:text});}
  if(action==='publish'){
  const d=getDoc(b.id);const p=b.platform;if(!platforms.includes(p))throw new Error('Неизвестная площадка.');assertPublishable(d,p);publicationKey=d.id+':'+p;
  const old:any=db.prepare('SELECT * FROM publications WHERE key=?').get(publicationKey);let state=old?JSON.parse(old.state):{};const credentials=creds(p,b.credentials);
