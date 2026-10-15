@@ -98,8 +98,8 @@ export async function publish(platform:string,doc:Doc,pdf:Uint8Array,creds:any,s
  throw new Error('Internet Archive: слишком много перенаправлений.');
  }
  if(!token||!state.uploaded)throw new Error('Токен или загруженный PDF отсутствует.');
- if(platform==='zenodo'){const d=await api(`https://zenodo.org/api/deposit/depositions/${state.id}/actions/publish`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});state.url=d.links?.html||`https://zenodo.org/records/${state.id}`;}
- if(platform==='figshare'){await api(`https://api.figshare.com/v2/account/articles/${state.id}/publish`,{method:'POST',headers:{Authorization:'token '+token,'Content-Type':'application/json'}});const a=await api(`https://api.figshare.com/v2/articles/${state.id}`);state.url=a.url_public_html||`https://figshare.com/articles/report/_/${state.id}`;}
+ if(platform==='zenodo'){const d=await api(`https://zenodo.org/api/deposit/depositions/${state.id}/actions/publish`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});state.url=d.links?.html||`https://zenodo.org/records/${state.id}`;}
+ if(platform==='figshare'){await api(`https://api.figshare.com/v2/account/articles/${state.id}/publish`,{method:'POST',headers:{Authorization:'token '+token}});const a=await api(`https://api.figshare.com/v2/articles/${state.id}`);state.url=a.url_public_html||`https://figshare.com/articles/report/_/${state.id}`;}
  if(platform==='osf'){const d=await api(`https://api.osf.io/v2/nodes/${state.id}/`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/vnd.api+json'},body:payload({data:{type:'nodes',id:state.id,attributes:{public:true}}})});if(!d.data.attributes.public)throw new Error('OSF не подтвердил публичный доступ.');}
  state.status='published';await save(state);return state;
 }
