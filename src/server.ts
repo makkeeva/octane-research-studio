@@ -5,7 +5,7 @@ import {resolve,join,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomBytes,timingSafeEqual,createHmac} from 'node:crypto';
 import {docSchema,assertPublishable} from '../lib/research/validation';
-import {importArticle,listArticles} from '../lib/research/source';
+import {importArticle,listArticles,listSitemapArticles,selectNewArticles} from '../lib/research/source';
 import {generateReport} from '../lib/research/ai';
 import {generateGeminiReport,checkGeminiKey,GEMINI_MODEL} from '../lib/research/gemini';
 import {makePdf} from '../lib/research/pdf';
@@ -25,13 +25,56 @@ const credentialStore=new CredentialStore(db,password);
 const connectable=[...platforms,'gemini'];
 const sessionHash=(token:string)=>createHmac('sha256',password).update(token).digest('hex');
 const generationJobs=new GenerationJobs(db);const loginAttempts=new Map<string,{count:number;until:number}>();
+// Небольшое хранилище состояния приложения (например, состояние автогенерации).
+db.exec('CREATE TABLE IF NOT EXISTS app_state(key TEXT PRIMARY KEY,value TEXT NOT NULL);');
+const stateGet=(k:string):string|null=>{const r:any=db.prepare('SELECT value FROM app_state WHERE key=?').get(k);return r?r.value:null;};
+const stateSet=(k:string,v:string)=>db.prepare('INSERT INTO app_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k,v);
+const autoDraftMax=Math.max(1,Math.min(10,Number(process.env.AUTO_DRAFT_MAX||3)));
+const autoDraftHour=Math.max(0,Math.min(23,Number(process.env.AUTO_DRAFT_HOUR||6)));
+const autoDraftLanguage:'English'|'Русский'=process.env.AUTO_DRAFT_LANGUAGE==='Русский'?'Русский':'English';
+const autoDraftSummary=()=>{try{return JSON.parse(stateGet('auto_last_summary')||'null');}catch{return null;}};
+let autoDraftRunning=false;
 const publicUrl=process.env.PUBLIC_URL?new URL(process.env.PUBLIC_URL).origin:'';const secure=publicUrl.startsWith('https://');
 function json(res:ServerResponse,data:any,status=200){res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
 function getDoc(id:string):Doc{const row:any=db.prepare('SELECT data FROM documents WHERE id=?').get(id);if(!row)throw new Error('Документ не найден.');return JSON.parse(row.data);}
 function saveDoc(d:Doc){db.prepare('INSERT INTO documents(id,data,updated) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated=excluded.updated').run(d.id,JSON.stringify(d),new Date().toISOString());}
 function editable(id:string){if(generationJobs.active(id))throw new Error('Для этого документа уже идёт генерация.');if(db.prepare('SELECT key FROM publications WHERE doc_id=? LIMIT 1').get(id))throw new Error('Публикация уже подготовлена. Для изменений создайте копию.');}
 function creds(p:string,c:any={}){const stored=credentialStore.read(p);return {token:c.token||stored.token||(p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']),access:c.access||stored.access||process.env.ARCHIVE_ACCESS_KEY,secret:c.secret||stored.secret||process.env.ARCHIVE_SECRET_KEY,category:c.category||stored.category,license:c.license||stored.license};}
-function connectionConfig(){const details=Object.fromEntries(connectable.map(p=>{const metadata=credentialStore.metadata(p);const envConfigured=p==='archive'?Boolean(process.env.ARCHIVE_ACCESS_KEY&&process.env.ARCHIVE_SECRET_KEY):Boolean((p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']));let defaults:any={};if(p==='figshare'&&metadata.saved){try{const saved=credentialStore.read(p);defaults={category:saved.category,license:saved.license};}catch{}}return [p,{...metadata,configured:metadata.saved||envConfigured,defaults}];}));const gemini=details.gemini.configured;return {ai:gemini||Boolean(process.env.OPENAI_API_KEY),aiProvider:gemini?'gemini':process.env.OPENAI_API_KEY?'openai':'gemini',model:gemini||!process.env.OPENAI_API_KEY?GEMINI_MODEL:process.env.OPENAI_MODEL||'gpt-4.1',connected:Object.fromEntries(connectable.map(p=>[p,details[p].configured])),connections:details};}
+function connectionConfig(){const details=Object.fromEntries(connectable.map(p=>{const metadata=credentialStore.metadata(p);const envConfigured=p==='archive'?Boolean(process.env.ARCHIVE_ACCESS_KEY&&process.env.ARCHIVE_SECRET_KEY):Boolean((p==='gemini'?(process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY):process.env[p.toUpperCase()+'_TOKEN']));let defaults:any={};if(p==='figshare'&&metadata.saved){try{const saved=credentialStore.read(p);defaults={category:saved.category,license:saved.license};}catch{}}return [p,{...metadata,configured:metadata.saved||envConfigured,defaults}];}));const gemini=details.gemini.configured;return {ai:gemini||Boolean(process.env.OPENAI_API_KEY),aiProvider:gemini?'gemini':process.env.OPENAI_API_KEY?'openai':'gemini',model:gemini||!process.env.OPENAI_API_KEY?GEMINI_MODEL:process.env.OPENAI_MODEL||'gpt-4.1',autoDraftEnabled:true,autoDraftMax,autoDraftHour,autoDraft:autoDraftSummary(),connected:Object.fromEntries(connectable.map(p=>[p,details[p].configured])),connections:details};}
+// Автосоздание черновиков: берём новые статьи из карты сайта и генерируем отчёты
+// последовательно, с ограничением на одну сессию, чтобы не исчерпать бесплатную
+// квоту Gemini. Генерация останавливается на первой ошибке квоты (HTTP 429).
+async function runAutoDraft(limit=autoDraftMax){
+ const geminiKey=creds('gemini').token;
+ if(!geminiKey)throw new Error('Нет ключа Gemini для автогенерации черновиков.');
+ const existing=new Set<string>();
+ for(const row of db.prepare('SELECT data FROM documents').all() as any[]){try{const src=JSON.parse(row.data).sourceUrl;if(src)existing.add(src);}catch{}}
+ const articleUrls=await listSitemapArticles();
+ const fresh=selectNewArticles(articleUrls,existing,limit);
+ let created=0,failed=0;const errors:string[]=[];
+ for(const articleUrl of fresh){
+  try{
+   const source=await importArticle(articleUrl);
+   const doc:Doc={...source,id:crypto.randomUUID(),created:new Date().toISOString(),language:autoDraftLanguage,author:'',license:'',report:null,reviewed:false,rights:false,researchContribution:''};
+   saveDoc(doc);
+   const report=await generateGeminiReport(doc,geminiKey);
+   doc.report=report;doc.reviewed=false;saveDoc(doc);created++;
+  }catch(e:any){failed++;const message=e?.message||'ошибка';errors.push(message);if(/HTTP 429|лимит/i.test(message))break;}
+ }
+ return {created,failed,candidates:fresh.length,sitemapTotal:articleUrls.length,errors:errors.slice(0,3),at:new Date().toISOString()};
+}
+// Ежедневный фоновый запуск: один раз в день, не раньше указанного часа, при наличии ключа Gemini.
+async function maybeAutoDraft(){
+ if(autoDraftRunning)return;
+ const today=new Date().toISOString().slice(0,10);
+ if(stateGet('auto_last_date')===today)return;
+ if(new Date().getHours()<autoDraftHour)return;
+ if(!creds('gemini').token)return;
+ autoDraftRunning=true;
+ try{const summary=await runAutoDraft();stateSet('auto_last_date',today);stateSet('auto_last_summary',JSON.stringify(summary));}
+ catch(e:any){stateSet('auto_last_date',today);stateSet('auto_last_summary',JSON.stringify({error:e?.message||'ошибка',at:new Date().toISOString()}));}
+ finally{autoDraftRunning=false;}
+}
 function session(req:IncomingMessage){const cookie=req.headers.cookie||'';const token=cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('studio_session='))?.split('=')[1];if(!token||!/^[a-f0-9]{64}$/.test(token))return null;const hash=sessionHash(token);const row=db.prepare('SELECT expires FROM sessions WHERE token_hash=?').get(hash) as {expires:number}|undefined;return row&&row.expires>Date.now()?hash:null;}
 async function body(req:IncomingMessage){let text='';for await(const chunk of req){text+=chunk;if(text.length>180000)throw new Error('Запрос слишком большой.');}return JSON.parse(text||'{}');}
 const policy=requestPolicy(publicUrl,port);
@@ -108,3 +151,8 @@ createServer(async(req,res)=>{
  const files:Record<string,string>={'/':'index.html','/app.js':'app.js','/style.css':'style.css'};const file=files[url.pathname];if(!file)return json(res,{error:'Не найдено.'},404);const path=join(root,'public',file);const mime:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};res.writeHead(200,{'Content-Type':mime[extname(path)],'Cache-Control':'no-store'});res.end(readFileSync(path));
  }catch(e:any){const message=e.name==='ZodError'?'Проверьте структуру и обязательные поля документа.':e.message||'Ошибка запроса.';if(publicationKey&&ownsLock)db.prepare("UPDATE publications SET status='failed',error=?,updated=? WHERE key=? AND status IN ('preparing','publishing')").run(message,new Date().toISOString(),publicationKey);json(res,{error:message},400);}
 }).listen(port,host,()=>console.log(`Octane Research Studio running on http://${host}:${port}`));
+// Ежедневная проверка на новые статьи в карте сайта. Интервал — каждый час; сам запуск
+// происходит не чаще одного раза в сутки (см. maybeAutoDraft). Небольшая задержка после
+// старта позволяет наверстать пропущенный день, если контейнер был выключен.
+const autoDraftTimer=setInterval(()=>{void maybeAutoDraft();},3600000);autoDraftTimer.unref?.();
+setTimeout(()=>{void maybeAutoDraft();},60000).unref?.();

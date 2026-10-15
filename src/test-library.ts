@@ -1,4 +1,4 @@
-export {octaneUrl,importArticle,listArticles} from '../lib/research/source';
+export {octaneUrl,importArticle,listArticles,parseSitemapLocs,articleUrlsFromLocs,selectNewArticles} from '../lib/research/source';
 export {assertPublishable,docSchema,reportSchema} from '../lib/research/validation';
 export {makePdf} from '../lib/research/pdf';
 export {prepare,publish,reconcile,checkOsfToken,checkZenodoToken,checkConnection} from '../lib/research/publish';
